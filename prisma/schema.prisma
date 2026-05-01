@@ -1,0 +1,132 @@
+// Схема БД для SaaS «Учёт остатков на маркетплейсах»
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Platform {
+  WB
+  OZON
+  KASPI
+  FLIP
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  ERROR
+}
+
+model Team {
+  id          String       @id @default(cuid())
+  name        String
+  createdAt   DateTime     @default(now())
+  members     Membership[]
+  credentials MarketplaceCredential[]
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String?
+  passwordHash String
+  createdAt    DateTime     @default(now())
+  memberships  Membership[]
+}
+
+model Membership {
+  id      String @id @default(cuid())
+  userId  String
+  teamId  String
+  role    Role   @default(MEMBER)
+  createdAt DateTime @default(now())
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team    Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, teamId])
+  @@index([teamId])
+}
+
+model MarketplaceCredential {
+  id            String   @id @default(cuid())
+  teamId        String
+  platform      Platform
+  label         String
+  // Для Ozon — Client-Id; для WB пусто; для Kaspi — merchant UID при наличии
+  clientId      String?
+  // Шифрованный API-ключ (AES-256-GCM, base64)
+  encryptedKey  String
+  isActive      Boolean  @default(true)
+  lastSyncAt    DateTime?
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  stocks        StockSnapshot[]
+  orders        OrderSnapshot[]
+  syncs         SyncLog[]
+
+  @@index([teamId, platform])
+}
+
+model StockSnapshot {
+  id           String   @id @default(cuid())
+  credentialId String
+  // Универсальный SKU (offer_id для Ozon, vendorCode для WB, code для Kaspi, sku для Flip CSV)
+  sku          String
+  // Платформенный идентификатор (chrtId для WB, sku/product_id для Ozon, masterProductId для Kaspi)
+  externalId   String?
+  // Штрихкод
+  barcode      String?
+  name         String?
+  warehouse    String?
+  quantity     Int      @default(0)
+  price        Float?
+  fetchedAt    DateTime @default(now())
+  credential   MarketplaceCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@index([credentialId, fetchedAt])
+  @@index([sku])
+}
+
+model OrderSnapshot {
+  id           String   @id @default(cuid())
+  credentialId String
+  externalOrderId String
+  sku          String?
+  status       String?
+  amount       Float?
+  quantity     Int      @default(1)
+  createdAtPlatform DateTime?
+  raw          String?  // JSON-снэпшот
+  fetchedAt    DateTime @default(now())
+  credential   MarketplaceCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@unique([credentialId, externalOrderId])
+  @@index([credentialId, createdAtPlatform])
+}
+
+model SyncLog {
+  id           String     @id @default(cuid())
+  credentialId String
+  status       SyncStatus
+  message      String?
+  stocksCount  Int        @default(0)
+  ordersCount  Int        @default(0)
+  startedAt    DateTime   @default(now())
+  finishedAt   DateTime?
+  credential   MarketplaceCredential @relation(fields: [credentialId], references: [id], onDelete: Cascade)
+
+  @@index([credentialId, startedAt])
+}
